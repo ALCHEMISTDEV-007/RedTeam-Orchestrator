@@ -33,7 +33,7 @@ Code snippet
 
     GEMINI_API_KEY="your_api_key_here"
 
-##💻 Usage
+## 💻 Usage
 
 Run the script as a standard user (no sudo required due to the -sT bypass):
 Bash
@@ -45,6 +45,6 @@ Bash
 
 python3 orchestrator.py -t 127.0.0.1
 
-##⚠️ Disclaimer
+## ⚠️ Disclaimer
 
 This tool is built for educational purposes, ethical hacking, and authorized security auditing only. Do not scan networks or infrastructure you do not own or have explicit permission to test.
