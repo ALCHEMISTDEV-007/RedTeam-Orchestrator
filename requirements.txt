@@ -1,0 +1,4 @@
+python-nmap
+rich
+python-dotenv
+google-generativeai
