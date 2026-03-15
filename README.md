@@ -68,3 +68,8 @@ Unauthorized use against systems you do not own or have permission to test is il
 
 **The Alchemist**
 Architect of intelligent red-team systems.
+
+
+## 📸 Example Output
+
+![ALCHEMIST Scan](images/scan_output.png)
