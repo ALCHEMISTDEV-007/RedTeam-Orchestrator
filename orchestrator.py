@@ -1,160 +1,114 @@
-import argparse
 import os
+from datetime import datetime
 import sys
+import argparse
 import subprocess
-
+import pyfiglet
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from dotenv import load_dotenv
-import google.generativeai as genai
 
+# Initialize UI
 console = Console()
+load_dotenv()
 
-def setup_environment():
-    # Load environment variables from .env file
-    load_dotenv()
+def print_banner():
+    # ASCII Art for the Alchemist identity
+    banner = pyfiglet.figlet_format("ALCHEMIST", font="slant")
+    console.print(f"[bold red]{banner}[/bold red]")
+    console.print("[bold cyan]⫸  PRECISION RED-TEAM ORCHESTRATOR v2.0[/bold cyan]")
+    console.print("[bold white]⫸  DEV: THE ALCHEMIST (B.P.I.W. PROJECTION)[/bold white]")
+    console.print("—" * 60 + "\n")
+
+def get_ai_analysis(scan_data):
+    """Modernized Gemini Analysis using the google-genai SDK"""
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        console.print("[bold red]Error:[/] GEMINI_API_KEY not found in .env file.")
-        console.print("Please copy .env.example to .env and add your valid Gemini API Key.")
-        sys.exit(1)
-        
-    genai.configure(api_key=api_key)
+    sys_instruct = (
+        "You are a Senior Red Team Lead. Analyze the following Nmap output. "
+        "Identify critical vulnerabilities, potential exploit paths, and remediation steps. "
+        "Format your response as a structured list of risks."
+    )
 
-def scan_target(target_ip: str) -> str:
-    """Uses subprocess to execute nmap and returns raw stdout."""
-    # Build the nmap command
-    # Using -sT (TCP Connect) instead of -sS (SYN) to avoid needing root/raw socket privileges
-    command = ["nmap", "-sT", "-sV", "-p", "80,8080,443", target_ip]
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            config=types.GenerateContentConfig(system_instruction=sys_instruct),
+            contents=f"Nmap Scan Results:\n{scan_data}"
+        )
+        return response.text
+    except Exception as e:
+        return f"[!] AI Analysis Failed: {str(e)}"
+
+def scan_target(target_ip: str, stealth: bool = False) -> str:
+    """Uses subprocess to execute nmap with optional evasion tactics."""
+    # Base command
+    command = ["nmap", "-sT", "-sV", "-p", "80,8080,443"]
+    
+    if stealth:
+        console.print("[bold purple]⫸  GHOST MODE ENGAGED: Evading IDS via 'Low & Slow' connection throttling...[/bold purple]")
+        # -T2: Polite timing (slows down scan)
+        # --max-rate 10: Never send more than 10 packets per second
+        # --scan-delay 1s: Wait exactly 1 second between every single probe
+        command.extend(["-T2", "--max-rate", "10", "--scan-delay", "1s"])
+    
+    command.append(target_ip)
     
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         transient=True,
     ) as progress:
-        progress.add_task(description=f"Scanning {target_ip} with nmap ({' '.join(command[1:])})...", total=None)
-        
+        progress.add_task(description=f"Scanning {target_ip}...", total=None)
         try:
-            # Run the command and capture output
             result = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+                command, capture_output=True, text=True, check=True
             )
-            raw_output = result.stdout
+            return result.stdout
         except subprocess.CalledProcessError as e:
-            console.print(f"[bold red]Nmap Execution Error (Exit Code {e.returncode}):[/]\n{e.stderr}")
+            console.print(f"[bold red]Nmap Execution Error (Exit Code {e.returncode}):\n{e.stderr}[/bold red]")
             sys.exit(1)
-        except Exception as e:
-            console.print(f"[bold red]Unexpected Error running Nmap:[/] {e}")
-            sys.exit(1)
-            
-    # Print the raw stdout for debugging as requested
-    console.print("\n[bold yellow]--- Raw Nmap Output Debug ---[/]")
-    console.print(raw_output)
-    console.print("[bold yellow]-------------------------------[/]\n")
 
-    return raw_output
-
-def analyze_results(scan_text: str) -> list:
-    """Sends raw Nmap text to Gemini and returns structured analysis."""
-    if not scan_text or "0 IP addresses (0 hosts up) scanned" in scan_text:
-        return []
-
-    system_instruction = (
-        "Act as a Senior Security Analyst. Analyze this raw Nmap scan output. "
-        "Identify the top 3 potential CVEs or security misconfigurations associated with these detected versions. "
-        "Provide a professional risk assessment, explaining the potential impact, and give specific patching/remediation steps for each. "
-        "Return the output strictly as a valid JSON array of objects, without any markdown code blocks wrapping it. "
-        "Each object must have the following keys: "
-        "'title' (string), 'risk_score' (string, e.g., 'High', 'Medium', 'Low'), "
-        "'description' (string), and 'remediation' (string)."
-    )
+def save_report(target_ip: str, report_content: str):
+    """Saves the AI assessment to a Markdown file for persistence."""
+    # 1. Create a 'reports' directory if it doesn't already exist
+    os.makedirs("reports", exist_ok=True)
     
-    try:
-        model = genai.GenerativeModel(
-            'gemini-2.5-flash',
-            system_instruction=system_instruction
-        )
-        
-        prompt = f"Target Raw Nmap Data:\n{scan_text}"
-        
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True,
-        ) as progress:
-            progress.add_task(description="Asking AI for Security Analysis...", total=None)
-            response = model.generate_content(prompt)
-        
-        response_text = response.text.strip()
-        
-        import json
-        # Strip potential markdown formatting from AI output
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        elif response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-            
-        return json.loads(response_text)
-    except Exception as e:
-        console.print(f"[bold red]AI Analysis Error:[/] {e}")
-        return []
-
-def display_results(target_ip: str, analysis: list):
-    """Formats and prints the analysis findings in a rich table."""
-    console.print(Panel(f"[bold cyan]Vulnerability Assessment Report for {target_ip}[/]", expand=False))
-
-    if analysis:
-        console.print("\n[bold magenta]AI Security Risk Assessment:[/]")
-        table = Table(show_header=True, header_style="bold magenta", expand=True)
-        table.add_column("Title", style="cyan", width=30)
-        table.add_column("Risk", justify="center", width=10)
-        table.add_column("Impact Analysis", style="white")
-        table.add_column("Remediation", style="green")
-
-        for finding in analysis:
-            risk = finding.get('risk_score', 'Unknown')
-            risk_color = "red" if any(x in risk.lower() for x in ["high", "critical"]) else ("yellow" if "medium" in risk.lower() else "green")
-            
-            table.add_row(
-                finding.get('title', 'N/A'),
-                f"[bold {risk_color}]{risk}[/]",
-                finding.get('description', 'N/A'),
-                finding.get('remediation', 'N/A')
-            )
-        
-        console.print(table)
-    else:
-        console.print("\n[bold yellow]No AI analysis available or failed to parse results.[/]")
-
-def main():
-    parser = argparse.ArgumentParser(description="Automated Vulnerability Assessment and Security Auditing Tool")
-    parser.add_argument("-t", "--target", required=True, help="Target IP address or hostname to scan")
-    args = parser.parse_args()
-
-    setup_environment()
-    target_ip = args.target
-
-    console.print(f"\n[bold blue]Starting assessment on target:[/] [white]{target_ip}[/]")
+    # 2. Generate a clean timestamp (e.g., 20260315_123000)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"reports/alchemist_{target_ip}_{timestamp}.md"
     
-    # Run Nmap Scan via subprocess
-    scan_text = scan_target(target_ip)
-    
-    # Perform AI Analysis on raw Nmap output
-    analysis_results = analyze_results(scan_text)
-    
-    # Render Output using Rich
-    display_results(target_ip, analysis_results)
-    
-    console.print("\n[bold green]Assessment Complete.[/]\n")
+    # 3. Write the formatted Markdown file
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(f"# 🛡️ Alchemist Recon Report: {target_ip}\n")
+        file.write(f"**Scan Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        file.write("---\n\n")
+        file.write(report_content)
+        
+    # 4. Notify the user
+    console.print(f"[bold green]⫸  ARCHIVE SUCCESS: Report saved locally to {filename}[/bold green]\n")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Alchemist Red Team Orchestrator")
+    parser.add_argument("-t", "--target", required=True, help="Target IP or Domain")
+    parser.add_argument("-s", "--stealth", action="store_true", help="Enable Ghost Mode (Low & Slow Evasion)")
+    args = parser.parse_args()
+
+    print_banner()
+    
+    scan_data = scan_target(args.target, args.stealth)
+    
+    
+    if scan_data:
+        console.print("[cyan][*] Passing scan data to AI for analysis...[/cyan]")
+        ai_report = get_ai_analysis(scan_data)
+        
+        # Print it to the screen
+        console.print("\n")
+        console.print(Panel(ai_report, title="Alchemist AI Analysis Report"))
+        
+        # Save it to the hard drive
+        save_report(args.target, ai_report)
